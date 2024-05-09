@@ -1,13 +1,26 @@
 import gymnasium as gym
-gym.make('MountainCar-v0')
-
-def print_hi(name):
-    # Use a breakpoint in the code line below to debug your script.
-    print(f'Hi, {name}')  # Press Ctrl+F8 to toggle the breakpoint.
+import pygame
 
 
-# Press the green button in the gutter to run the script.
+def run():
+    print("Hello World")
+    env = gym.make('MountainCar-v0', render_mode='human')
+    state = env.reset()[0]
+    terminated = False
+
+    rewards = 0
+
+#0: Accelerate to the left 1: Don’t accelerate 2: Accelerate to the right
+
+    while (not terminated and rewards > -1000):
+        action = env.action_space.sample()
+        next_state, reward, terminated, _, _ = env.step(action)
+
+        rewards += reward
+        state = next_state
+
+    env.close()
+
+
 if __name__ == '__main__':
-    print_hi('PyCharm')
-
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/
+    run()
