@@ -1,8 +1,11 @@
+import json
+
 import gymnasium as gym
 import numpy as np
 import matplotlib.pyplot as plt
 import pickle
 import time
+import codecs, json
 from datetime import datetime
 
 
@@ -41,11 +44,17 @@ def run(episodes, is_training=True, render=False):
     vel_space = np.linspace(env.observation_space.low[1], env.observation_space.high[1], 20)  # Between -0.07 and 0.07
 
     if (is_training):
-        q = np.zeros((len(pos_space), len(vel_space), env.action_space.n))  # init a 20x20x3 array
+        q = np.zeros((len(pos_space), len(vel_space), env.action_space.n)) # init a 20x20x3 array
     else:
-        f = open('mountain_car.pkl', 'rb')
-        q = pickle.load(f)
-        f.close()
+
+        json_file = open(f'mountain_car.json', 'r')
+        q_list = json.load(json_file)
+        q = np.array(q_list)
+        json_file.close()
+
+        #f = open('mountain_car.pkl', 'rb')
+        #q = pickle.load(f)
+        #f.close()
 
     crossing_factor = 0.9  # crossing factor
     mutation_factor = 0.9  # 1 / mutation factor.
@@ -53,6 +62,7 @@ def run(episodes, is_training=True, render=False):
     epsilon = 1  # exploration factor
     epsilon_decay_rate = 2 / episodes  # epsilon decay rate
     rewards_per_episode = np.zeros(episodes)
+    #np.random.seed(1)
     rng = np.random.default_rng()
     for i in range(episodes):
         print(f'Episode {i + 1}/{episodes}')
@@ -64,8 +74,9 @@ def run(episodes, is_training=True, render=False):
 
         rewards = 0
 
-        while not terminated and rewards > -1000:
+        while not terminated and rewards > -300:
             #randomValue = randomNumberGenerator()
+            #randomValue = np.random.rand()
             randomValue = rng.random()
             #print(randomValue)
             if is_training and randomValue < epsilon:
@@ -98,9 +109,16 @@ def run(episodes, is_training=True, render=False):
 
     # Save Q table to file
     if is_training:
-        f = open('mountain_car.pkl', 'wb')
-        pickle.dump(q, f)
-        f.close()
+
+        q_list = q.tolist()
+        json_file = open(f'mountain_car.json', 'w')
+        #json.dump(q_list, codecs.open(json_file, 'w', encoding='utf-8'), separators=(',', ':'), sort_keys=True, indent=4)
+        json.dump(q_list, json_file)
+        json_file.close()
+
+        #f = open('mountain_car.pkl', 'wb')
+        #pickle.dump(q, f)
+        #f.close()
 
     mean_rewards = np.zeros(episodes)
     for t in range(episodes):
@@ -142,6 +160,6 @@ def convert_pkl_to_txt(pkl_filename, txt_filename):
 
 
 if __name__ == '__main__':
-    run(3000, is_training=True, render=False)
+    #run(3000, is_training=True, render=False)
     #convert_pkl_to_txt('mountain_car.pkl', 'mountain_car.txt')
-    #run(10, is_training=False, render=True)
+    run(10, is_training=False, render=True)
