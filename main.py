@@ -53,7 +53,7 @@ def run(episodes, is_training=True, render=False):
     epsilon = 1  # exploration factor
     epsilon_decay_rate = 2 / episodes  # epsilon decay rate
     rewards_per_episode = np.zeros(episodes)
-
+    rng = np.random.default_rng()
     for i in range(episodes):
         print(f'Episode {i + 1}/{episodes}')
         state = env.reset()[0]  # Starting position, starting velocity always 0
@@ -65,7 +65,8 @@ def run(episodes, is_training=True, render=False):
         rewards = 0
 
         while not terminated and rewards > -1000:
-            randomValue = randomNumberGenerator()
+            #randomValue = randomNumberGenerator()
+            randomValue = rng.random()
             #print(randomValue)
             if is_training and randomValue < epsilon:
                 # Choose random action (0=drive left, 1=stay neutral, 2=drive right)
