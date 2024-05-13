@@ -8,6 +8,16 @@ import time
 import codecs, json
 from datetime import datetime
 
+class NumpyEncoder(json.JSONEncoder):
+    """ Special json encoder for numpy types """
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return json.JSONEncoder.default(self, obj)
 
 def sleep_microseconds(microseconds):
     start_time = time.time()
@@ -48,8 +58,9 @@ def run(episodes, is_training=True, render=False):
     else:
 
         json_file = open(f'mountain_car.json', 'r')
-        q_list = json.load(json_file)
-        q = np.array(q_list)
+        loaded = json.load(json_file)
+        loadeded = json.loads(loaded)
+        q = np.asarray(loadeded)
         json_file.close()
 
         #f = open('mountain_car.pkl', 'rb')
@@ -113,7 +124,9 @@ def run(episodes, is_training=True, render=False):
         q_list = q.tolist()
         json_file = open(f'mountain_car.json', 'w')
         #json.dump(q_list, codecs.open(json_file, 'w', encoding='utf-8'), separators=(',', ':'), sort_keys=True, indent=4)
-        json.dump(q_list, json_file)
+
+        dumped = json.dumps(q, cls=NumpyEncoder)
+        json.dump(dumped, json_file)
         json_file.close()
 
         #f = open('mountain_car.pkl', 'wb')
@@ -160,6 +173,6 @@ def convert_pkl_to_txt(pkl_filename, txt_filename):
 
 
 if __name__ == '__main__':
-    #run(3000, is_training=True, render=False)
+    #run(1000, is_training=True, render=False)
     #convert_pkl_to_txt('mountain_car.pkl', 'mountain_car.txt')
     run(10, is_training=False, render=True)
