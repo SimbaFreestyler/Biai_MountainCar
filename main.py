@@ -1,15 +1,19 @@
 import json
 
 import gymnasium as gym
+import numpy
 import numpy as np
 import matplotlib.pyplot as plt
 import pickle
 import time
 import codecs, json
+import os
 from datetime import datetime
+
 
 class NumpyEncoder(json.JSONEncoder):
     """ Special json encoder for numpy types """
+
     def default(self, obj):
         if isinstance(obj, np.integer):
             return int(obj)
@@ -18,6 +22,7 @@ class NumpyEncoder(json.JSONEncoder):
         elif isinstance(obj, np.ndarray):
             return obj.tolist()
         return json.JSONEncoder.default(self, obj)
+
 
 def sleep_microseconds(microseconds):
     start_time = time.time()
@@ -46,7 +51,7 @@ def randomNumberGenerator():
         return randomNumberGenerator()
 
 
-def run(episodes, is_training=True, render=False):
+def qRun(episodes, is_training=True, render=False):
     env = gym.make('MountainCar-v0', render_mode='human' if render else None)
 
     # Divide position and velocity into segments
@@ -54,7 +59,7 @@ def run(episodes, is_training=True, render=False):
     vel_space = np.linspace(env.observation_space.low[1], env.observation_space.high[1], 20)  # Between -0.07 and 0.07
 
     if (is_training):
-        q = np.zeros((len(pos_space), len(vel_space), env.action_space.n)) # init a 20x20x3 array
+        q = np.zeros((len(pos_space), len(vel_space), env.action_space.n))  # init a 20x20x3 array
     else:
 
         json_file = open(f'mountain_car.json', 'r')
@@ -63,12 +68,8 @@ def run(episodes, is_training=True, render=False):
         q = np.asarray(loadeded)
         json_file.close()
 
-        #f = open('mountain_car.pkl', 'rb')
-        #q = pickle.load(f)
-        #f.close()
-
-    crossing_factor = 0.9  # crossing factor
-    mutation_factor = 0.9  # 1 / mutation factor.
+    learning_factor = 0.9
+    mutation_factor = 0.9
 
     epsilon = 1  # exploration factor
     epsilon_decay_rate = 2 / episodes  # epsilon decay rate
@@ -85,7 +86,7 @@ def run(episodes, is_training=True, render=False):
 
         rewards = 0
 
-        while not terminated and rewards > -300:
+        while not terminated and rewards > -1000:
             #randomValue = randomNumberGenerator()
             #randomValue = np.random.rand()
             randomValue = rng.random()
@@ -101,7 +102,7 @@ def run(episodes, is_training=True, render=False):
             new_state_v = np.digitize(new_state[1], vel_space)
 
             if is_training:
-                q[state_p, state_v, action] = q[state_p, state_v, action] + crossing_factor * (
+                q[state_p, state_v, action] = q[state_p, state_v, action] + learning_factor * (
                         reward + mutation_factor * np.max(q[new_state_p, new_state_v, :]) - q[
                     state_p, state_v, action]
                 )
@@ -115,23 +116,18 @@ def run(episodes, is_training=True, render=False):
         epsilon = max(epsilon - epsilon_decay_rate, 0)
 
         rewards_per_episode[i] = rewards
-
+        if not is_training:
+            print(f'Cycles: ' + (rewards_per_episode[i] * -1).__str__())
     env.close()
 
     # Save Q table to file
     if is_training:
-
         q_list = q.tolist()
         json_file = open(f'mountain_car.json', 'w')
-        #json.dump(q_list, codecs.open(json_file, 'w', encoding='utf-8'), separators=(',', ':'), sort_keys=True, indent=4)
 
         dumped = json.dumps(q, cls=NumpyEncoder)
         json.dump(dumped, json_file)
         json_file.close()
-
-        #f = open('mountain_car.pkl', 'wb')
-        #pickle.dump(q, f)
-        #f.close()
 
     mean_rewards = np.zeros(episodes)
     for t in range(episodes):
@@ -141,38 +137,120 @@ def run(episodes, is_training=True, render=False):
     plt.savefig(f'mountain_car.png')
 
 
-def convert_pkl_to_txt(pkl_filename, txt_filename):
-    try:
-        # Open the .pkl file in read-binary mode ('rb')
-        with open(pkl_filename, 'rb') as pkl_file:
-            # Load the contents of the pickle file
-            data = np.load(pkl_file, allow_pickle=True)
+def create_buffer(buffer_length):
+    """Creates a random policy."""
+    return np.random.choice([0, 1, 2], size=buffer_length)
 
-        # Open the .txt file in write mode ('w')
-        with open(txt_filename, 'w') as txt_file:
-            # Convert the data to a human-readable format and write it to the .txt file
-            if isinstance(data, np.ndarray):
-                if data.ndim == 1:
-                    # If data has only one dimension, treat it as a single row
-                    float_values = data[:2]
-                    int_value = int(data[2])
-                    txt_file.write(f"{float_values[0]:.8f} {float_values[1]:.8f} {int_value}\n")
-                else:
-                    # Iterate over each row if data has multiple rows
-                    for row in data:
-                        float_values = row[:2]
-                        int_value = int(row[2])
-                        txt_file.write(f"{float_values[0]:.8f} {float_values[1]:.8f} {int_value}\n")
-            else:
-                txt_file.write(str(data))
 
-        print(f"Conversion successful. Data from '{pkl_filename}' has been written to '{txt_filename}'.")
+def evaluate_buffer(policy, env):
+    """Evaluates a policy by running it in the environment."""
+    state = env.reset()[0]
+    total_reward = 0
+    for action in policy:
+        state, reward, done, truncated, _ = env.step(action)
+        total_reward += reward
+        if done:
+            break
+    return total_reward
 
-    except Exception as e:
-        print(f"Error occurred during conversion: {e}")
+
+def select_parents(population, fitnesses):
+    """Selects two parents using a fitness-proportionate selection."""
+    total_fitness = np.sum(fitnesses)
+    selection_probs = fitnesses / total_fitness
+    parent_indices = np.random.choice(np.arange(len(population)), size=2, p=selection_probs)
+    return population[parent_indices[0]], population[parent_indices[1]]
+
+
+def crossover(parent1, parent2, crossover_rate, buffer_length):
+    """Performs a single-point crossover."""
+    if np.random.rand() < crossover_rate:
+        crossover_point = np.random.randint(0, buffer_length)
+        child1 = np.concatenate([parent1[:crossover_point], parent2[crossover_point:]])
+        child2 = np.concatenate([parent2[:crossover_point], parent1[crossover_point:]])
+    else:
+        child1, child2 = parent1.copy(), parent2.copy()
+    return child1, child2
+
+
+def mutate(policy, policy_length, mutation_rate):
+    """Mutates a policy by randomly changing some actions."""
+    for i in range(policy_length):
+        if np.random.rand() < mutation_rate:
+            policy[i] = np.random.choice([0, 1, 2])
+    return policy
+
+
+def save_best_buffer(policy, best_policy_file):
+    """Saves the best policy to a JSON file."""
+    with open(best_policy_file, 'w') as file:
+        json.dump(policy.tolist(), file)
+
+
+def load_best_buffer(best_policy_file):
+    """Loads the best policy from a JSON file."""
+    if os.path.exists(best_policy_file):
+        with open(best_policy_file, 'r') as file:
+            policy = np.array(json.load(file))
+            return policy
+    else:
+        return None
+
+
+def genetic_algorithm(population_size, generations, mutation_rate, crossover_rate, buffer_length, best_buffer_file,
+                      env):
+    # Initialize the population
+    population = np.array([create_buffer(buffer_length) for _ in range(population_size)])
+    best_buffer = load_best_buffer(best_buffer_file)
+    best_score = evaluate_buffer(best_buffer, env) if best_buffer is not None else -np.inf
+
+    for generation in range(generations):
+        # Evaluate fitness of each individual
+        fitnesses = np.array([evaluate_buffer(policy, env) for policy in population])
+
+        # Select the best policy
+        max_fitness_idx = np.argmax(fitnesses)
+        if fitnesses[max_fitness_idx] > best_score:
+            best_score = fitnesses[max_fitness_idx]
+            best_buffer = population[max_fitness_idx].copy()
+
+        print(f'Generation {generation}: Best Score = {best_score}')
+
+        # Selection
+        new_population = []
+        for _ in range(population_size // 2):
+            parent1, parent2 = select_parents(population, fitnesses)
+            child1, child2 = crossover(parent1, parent2, crossover_rate, buffer_length)
+            new_population.append(mutate(child1, buffer_length, mutation_rate))
+            new_population.append(mutate(child2, buffer_length, mutation_rate))
+        population = np.array(new_population)
+
+    return best_buffer
+
+
+def run(population_size, generations, mutation_rate, crossover_rate, policy_length, best_policy_file, render,
+        is_training):
+    if is_training:
+        env = gym.make('MountainCar-v0')
+        best_policy = genetic_algorithm(population_size, generations, mutation_rate, crossover_rate, policy_length,
+                                        best_policy_file, env)
+        save_best_buffer(best_policy, best_policy_file)
+        env.close()
+        return
+    best_policy = load_best_buffer(best_policy_file)
+    if best_policy is None:
+        print('No best policy found.')
+        return
+    # Test the best policy
+    env = gym.make('MountainCar-v0', render_mode='human' if render else None)
+    total_reward = evaluate_buffer(best_policy, env) if best_policy is not None else -np.inf
+    env.close()
+    print(f'Total reward of the best policy: {total_reward}')
 
 
 if __name__ == '__main__':
-    #run(1000, is_training=True, render=False)
-    #convert_pkl_to_txt('mountain_car.pkl', 'mountain_car.txt')
-    run(10, is_training=False, render=True)
+    run(population_size=50, generations=300, mutation_rate=0.1, crossover_rate=0.5, policy_length=1000,
+        best_policy_file='best_policy.json', render=True, is_training=True)
+
+    #qRun(3000, is_training=True, render=False)
+    #qRun(5, is_training=False, render=True)
