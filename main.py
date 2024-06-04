@@ -197,23 +197,34 @@ def load_best_buffer(best_policy_file):
         return None
 
 
+fitness_checkpoints = []
+
+
 def genetic_algorithm(population_size, generations, mutation_rate, crossover_rate, buffer_length, best_buffer_file,
                       env):
     # Initialize the population
     population = np.array([create_buffer(buffer_length) for _ in range(population_size)])
     best_buffer = load_best_buffer(best_buffer_file)
     best_score = evaluate_buffer(best_buffer, env) if best_buffer is not None else -np.inf
+    best_scores = []
 
     for generation in range(generations):
         # Evaluate fitness of each individual
         fitnesses = np.array([evaluate_buffer(policy, env) for policy in population])
-
+        
         # Select the best policy
         max_fitness_idx = np.argmax(fitnesses)
         if fitnesses[max_fitness_idx] > best_score:
             best_score = fitnesses[max_fitness_idx]
             best_buffer = population[max_fitness_idx].copy()
 
+        best_scores.append(best_score)
+        if generation % 100 == 0:
+            fitness_checkpoints.append(best_score)
+            if len(fitness_checkpoints) > 1 and fitness_checkpoints[-1] == fitness_checkpoints[-2]:
+                mutation_rate += 0.02
+                crossover_rate -= 0.02
+                print(f'Generation {generation}: Mutation rate increased to {mutation_rate}, crossover rate decreased to {crossover_rate}')
         print(f'Generation {generation}: Best Score = {best_score}')
 
         # Selection
@@ -225,17 +236,26 @@ def genetic_algorithm(population_size, generations, mutation_rate, crossover_rat
             new_population.append(mutate(child2, buffer_length, mutation_rate))
         population = np.array(new_population)
 
-    return best_buffer
+    return best_buffer, best_scores
 
 
 def run(population_size, generations, mutation_rate, crossover_rate, policy_length, best_policy_file, render,
-        is_training):
+        is_training, plot_filename):
     if is_training:
         env = gym.make('MountainCar-v0')
-        best_policy = genetic_algorithm(population_size, generations, mutation_rate, crossover_rate, policy_length,
-                                        best_policy_file, env)
+        best_policy, best_scores = genetic_algorithm(population_size, generations, mutation_rate, crossover_rate,
+                                                     policy_length,
+                                                     best_policy_file, env)
         save_best_buffer(best_policy, best_policy_file)
         env.close()
+
+        plt.plot(best_scores)
+        plt.xlabel('Generations')
+        plt.ylabel('Best Score')
+        plt.title(f'Params: pop_size={population_size}, mutation={mutation_rate}, cross_rate={crossover_rate}')
+        plt.savefig(plot_filename)
+        plt.show()
+
         return
     best_policy = load_best_buffer(best_policy_file)
     if best_policy is None:
@@ -249,8 +269,8 @@ def run(population_size, generations, mutation_rate, crossover_rate, policy_leng
 
 
 if __name__ == '__main__':
-    run(population_size=50, generations=300, mutation_rate=0.1, crossover_rate=0.5, policy_length=1000,
-        best_policy_file='best_policy.json', render=True, is_training=True)
+    run(population_size=50, generations=1000, mutation_rate=0.07, crossover_rate=0.9, policy_length=600,
+        best_policy_file='best_policy.json', render=True, is_training=False, plot_filename='graph3.png')
 
     #qRun(3000, is_training=True, render=False)
     #qRun(5, is_training=False, render=True)
