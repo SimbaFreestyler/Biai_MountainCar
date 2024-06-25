@@ -158,16 +158,28 @@ def select_parents(population, fitnesses):
     """Selects two parents using a fitness-proportionate selection."""
     total_fitness = np.sum(fitnesses)
     selection_probs = fitnesses / total_fitness
-    parent_indices = np.random.choice(np.arange(len(population)), size=2, p=selection_probs)
+    parent_indices = np.random.choice(np.arange(len(population)), size=2, p=selection_probs, replace=False)
     return population[parent_indices[0]], population[parent_indices[1]]
 
 
-def crossover(parent1, parent2, crossover_rate, buffer_length):
+def crossover(parent1, parent2, crossover_rate, buffer_length, num_cuts):
     """Performs a single-point crossover."""
     if np.random.rand() < crossover_rate:
-        crossover_point = np.random.randint(0, buffer_length)
-        child1 = np.concatenate([parent1[:crossover_point], parent2[crossover_point:]])
-        child2 = np.concatenate([parent2[:crossover_point], parent1[crossover_point:]])
+        num_cuts = max(1, min(num_cuts, buffer_length - 1))  # Ensure num_cuts is within valid range
+        crossover_points = sorted(np.random.choice(range(1, buffer_length), num_cuts, replace=False))
+        crossover_points = [0] + crossover_points + [buffer_length]  # Add start and end points
+
+        child1, child2 = [], []
+
+        for i in range(len(crossover_points) - 1):
+            start, end = crossover_points[i], crossover_points[i + 1]
+            if i % 2 == 0:
+                child1.extend(parent1[start:end])
+                child2.extend(parent2[start:end])
+            else:
+                child1.extend(parent2[start:end])
+                child2.extend(parent1[start:end])
+        child1, child2 = np.array(child1), np.array(child2)
     else:
         child1, child2 = parent1.copy(), parent2.copy()
     return child1, child2
@@ -200,59 +212,79 @@ def load_best_buffer(best_policy_file):
 fitness_checkpoints = []
 
 
-def genetic_algorithm(population_size, generations, mutation_rate, crossover_rate, buffer_length, best_buffer_file,
-                      env):
+def genetic_algorithm(population_size, mutation_rate, crossover_rate, buffer_length, best_buffer_file,
+                      crossing_count, env, startFromScratch):
     # Initialize the population
     population = np.array([create_buffer(buffer_length) for _ in range(population_size)])
-    best_buffer = load_best_buffer(best_buffer_file)
+    if not startFromScratch:
+        best_buffer = load_best_buffer(best_buffer_file)
+    else:
+        best_buffer = None
     best_score = evaluate_buffer(best_buffer, env) if best_buffer is not None else -np.inf
     best_scores = []
 
-    for generation in range(generations):
+    generation = 0
+    stagnation_counter = 0  # Add a counter for stagnation
+    mutation_rate_cpy = mutation_rate
+    crossover_rate_cpy = crossover_rate
+
+    while best_score < -250 and generation < 10000:
         # Evaluate fitness of each individual
         fitnesses = np.array([evaluate_buffer(policy, env) for policy in population])
-        
+
         # Select the best policy
         max_fitness_idx = np.argmax(fitnesses)
         if fitnesses[max_fitness_idx] > best_score:
             best_score = fitnesses[max_fitness_idx]
             best_buffer = population[max_fitness_idx].copy()
+            stagnation_counter = 0  # Reset stagnation counter
+            mutation_rate = mutation_rate_cpy
+            crossover_rate = crossover_rate_cpy
+        else:
+            stagnation_counter += 1  # Increment stagnation counter
 
         best_scores.append(best_score)
-        if generation % 100 == 0:
-            fitness_checkpoints.append(best_score)
-            if len(fitness_checkpoints) > 1 and fitness_checkpoints[-1] == fitness_checkpoints[-2]:
-                mutation_rate += 0.02
-                crossover_rate -= 0.02
-                print(f'Generation {generation}: Mutation rate increased to {mutation_rate}, crossover rate decreased to {crossover_rate}')
+
+        # Adapt mutation and crossover rates if stagnation occurs
+        if stagnation_counter > 1000:
+            mutation_rate = min(0.5, mutation_rate + 0.02)
+            crossover_rate = max(0.5, crossover_rate - 0.02)
+            print(
+                f'Generation {generation}: Mutation rate increased to {mutation_rate}, crossover rate decreased to {crossover_rate}')
+            stagnation_counter = 0  # Reset stagnation counter after adaptation
+
         print(f'Generation {generation}: Best Score = {best_score}')
 
         # Selection
-        new_population = []
-        for _ in range(population_size // 2):
+        new_population = [best_buffer.copy()]  # Elitism: carry the best individual to the next generation
+        while len(new_population) < population_size:
             parent1, parent2 = select_parents(population, fitnesses)
-            child1, child2 = crossover(parent1, parent2, crossover_rate, buffer_length)
+            child1, child2 = crossover(parent1, parent2, crossover_rate, buffer_length, crossing_count)
             new_population.append(mutate(child1, buffer_length, mutation_rate))
-            new_population.append(mutate(child2, buffer_length, mutation_rate))
+            if len(new_population) < population_size:
+                new_population.append(mutate(child2, buffer_length, mutation_rate))
         population = np.array(new_population)
+        generation += 1
 
     return best_buffer, best_scores
 
 
-def run(population_size, generations, mutation_rate, crossover_rate, policy_length, best_policy_file, render,
-        is_training, plot_filename):
+def run(population_size, mutation_rate, crossover_rate, policy_length, best_policy_file, render,
+        is_training, plot_filename, crossing_count, startFromScratch):
     if is_training:
         env = gym.make('MountainCar-v0')
-        best_policy, best_scores = genetic_algorithm(population_size, generations, mutation_rate, crossover_rate,
-                                                     policy_length,
-                                                     best_policy_file, env)
+        best_policy, best_scores = genetic_algorithm(population_size, mutation_rate, crossover_rate,
+                                                     policy_length, best_policy_file, crossing_count, env,
+                                                     startFromScratch)
+
         save_best_buffer(best_policy, best_policy_file)
         env.close()
 
         plt.plot(best_scores)
         plt.xlabel('Generations')
         plt.ylabel('Best Score')
-        plt.title(f'Params: pop_size={population_size}, mutation={mutation_rate}, cross_rate={crossover_rate}')
+        plt.title(
+            f'Params: pop_size={population_size}, mutation={mutation_rate}, cross_rate={crossover_rate}, cross_count={crossing_count}')
         plt.savefig(plot_filename)
         plt.show()
 
@@ -269,8 +301,12 @@ def run(population_size, generations, mutation_rate, crossover_rate, policy_leng
 
 
 if __name__ == '__main__':
-    run(population_size=50, generations=1000, mutation_rate=0.07, crossover_rate=0.9, policy_length=600,
-        best_policy_file='best_policy.json', render=True, is_training=False, plot_filename='graph3.png')
+    time_start = time.time()
+    run(population_size=100, mutation_rate=0.06, crossover_rate=0.95, policy_length=600,
+        best_policy_file='best_policy.json', render=True, is_training=True, plot_filename='graph7907.png',
+        crossing_count=7, startFromScratch=False)
+    time_end = time.time()
+    print(f'Total time: {time_end - time_start} seconds')
 
-    #qRun(3000, is_training=True, render=False)
+    #qRun(2000, is_training=True, render=False)
     #qRun(5, is_training=False, render=True)
